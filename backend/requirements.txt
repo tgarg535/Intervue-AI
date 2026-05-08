@@ -1,0 +1,20 @@
+# --- Core Framework ---
+fastapi                     # Web framework for API and WebSockets
+uvicorn[standard]           # ASGI server to run FastAPI
+pydantic                    # Data validation for session/report schemas
+python-dotenv               # Environment variable management for API keys
+
+# --- AI & LLM Orchestration ---
+google-genai                # Official SDK for Gemini 2.0 Flash Live API
+langgraph                   # For the Interviewer State Machine nodes/edges
+langchain                   # Base framework for AI workflows
+
+# --- RAG & PDF Processing ---
+pymupdf                     # Fast PDF parsing for resumes and JDs
+langchain-postgres          # For pgvector integration with Supabase/Postgres
+psycopg[binary,pool]        # Modern PostgreSQL adapter for Python
+langchain-google-genai      # Gemini embeddings and standard Flash Lite calls
+
+# --- Utilities ---
+numpy                       # For handling local audio/sentiment calculations
+websockets                  # Low-level support for Gemini Live streaming
