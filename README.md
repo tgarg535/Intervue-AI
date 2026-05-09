@@ -16,7 +16,7 @@
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Supabase](https://img.shields.io/badge/Supabase-Postgres-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
-[![Gemini](https://img.shields.io/badge/Gemini_2.0_Flash-Live-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
+[![Gemini](https://img.shields.io/badge/Gemini_3.1_Flash-Live-4285F4?style=for-the-badge&logo=google&logoColor=white)](https://ai.google.dev/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Orchestrator-FF6B35?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![pgvector](https://img.shields.io/badge/pgvector-RAG-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://github.com/pgvector/pgvector)
 
@@ -30,7 +30,7 @@
 
 **Intervue AI** is a full-stack, real-time interview simulation platform that conducts intelligent mock interviews tailored to your resume and job description. It uses:
 
-- 🎙️ **Gemini 2.0 Flash Live** for low-latency, voice-driven conversations
+- 🎙️ **Gemini 3.1 Flash Live** for low-latency, voice-driven conversations
 - 🧠 **LangGraph** to orchestrate adaptive interview flows that respond to your answer quality
 - 📄 **RAG (pgvector)** to deeply understand your resume and job description
 - 📊 **Client-side AI** (MediaPipe + Web Audio) for posture, sentiment, and filler-word detection
