@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import psycopg
 from psycopg.rows import dict_row
@@ -30,7 +30,7 @@ class PersistenceService:
     def _connect(self) -> psycopg.Connection:
         if not self.database_url:
             raise RuntimeError("DATABASE_URL is not configured.")
-        return psycopg.connect(self.database_url, row_factory=dict_row)
+        return cast(Any, psycopg.connect(self.database_url, row_factory=cast(Any, dict_row)))
 
     def create_session(
         self,
@@ -85,7 +85,9 @@ class PersistenceService:
                         """,
                         (session_id,),
                     )
-                    return cur.fetchone()
+                    # psycopg with dict_row returns a mapping, but the type
+                    # can be TupleRow; cast to the expected Dict type for typing
+                    return cast(Optional[Dict[str, Any]], cur.fetchone())
         except Exception as exc:
             print(f"[Persistence] get_session failed: {exc}")
             return None
@@ -130,7 +132,7 @@ class PersistenceService:
                         """,
                         (session_id,),
                     )
-                    return cur.fetchall()
+                    return cast(List[Dict[str, Any]], cur.fetchall())
         except Exception as exc:
             print(f"[Persistence] get_transcript failed: {exc}")
             return []

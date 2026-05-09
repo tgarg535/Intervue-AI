@@ -1,4 +1,4 @@
-from typing import TypedDict, Annotated, List, Literal
+from typing import TypedDict, Annotated, List, Literal, cast
 import operator
 from langgraph.graph import StateGraph, START, END
 
@@ -142,4 +142,4 @@ def next_state(
         "asked_questions": state.get("asked_questions", 0),
         "is_complete": False,
     }
-    return interviewer_app.invoke({**state, **update})
+    return cast(InterviewState, interviewer_app.invoke({**state, **update}))

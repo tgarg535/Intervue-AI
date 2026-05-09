@@ -133,7 +133,7 @@ class SessionStore:
             return [e.sentiment for e in session.transcript if e.sentiment]
 
         persisted = persistence_service.get_transcript(session_id)
-        return [entry.get("sentiment_tag") for entry in persisted if entry.get("sentiment_tag")]
+        return [str(entry.get("sentiment_tag")) for entry in persisted if entry.get("sentiment_tag")]
 
     def get_context_block(self, session_id: str) -> str:
         """Returns JD + resume snippet to inject into Gemini system prompt."""

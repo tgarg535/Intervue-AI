@@ -104,7 +104,7 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
     base_instruction = (
         "You are Intervue, a senior AI technical interviewer. "
         "Conduct a focused interview following this flow:\n"
-        "1. GREET: Welcome the candidate warmly (30 s)\n"
+        "1. GREET: Welcome the candidate warmly\n"
         "2. TECH: Ask 3 technical questions. Adapt difficulty based on their answers. "
         "Start moderate, go harder if correct, easier if struggling.\n"
         "3. HR: Ask 2 behavioural questions (STAR format expected).\n"
@@ -137,13 +137,20 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
         async with live_connect as session:
             # Send greeting only once per session_id even if websocket reconnects.
             if session_id not in _bootstrapped_sessions:
-                await session.send(
-                    input=(
-                        "Greet the candidate warmly in 1-2 short sentences. "
-                        "Do not ask any interview question in this first turn. "
-                        "End by inviting the candidate to begin when ready."
+                await session.send_client_content(
+                    turns=types.Content(
+                        role="user",
+                        parts=[
+                            types.Part(
+                                text=(
+                                    "Greet the candidate warmly in 1-2 short sentences. "
+                                    "Do not ask any interview question in this first turn. "
+                                    "End by inviting the candidate to begin when ready."
+                                )
+                            )
+                        ],
                     ),
-                    end_of_turn=True,
+                    turn_complete=True,
                 )
                 _bootstrapped_sessions.add(session_id)
 
@@ -152,6 +159,14 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
             # -------------------------------------------------------- #
             async def receive_from_browser() -> None:
                 silence_commit_task: asyncio.Task[None] | None = None
+                audio_stream_ended = False
+
+                async def _end_audio_stream() -> None:
+                    nonlocal audio_stream_ended
+                    if audio_stream_ended:
+                        return
+                    await session.send_realtime_input(audio_stream_end=True)
+                    audio_stream_ended = True
 
                 async def _schedule_silence_commit() -> None:
                     nonlocal silence_commit_task
@@ -161,11 +176,11 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
                     async def _commit_after_delay() -> None:
                         try:
                             await asyncio.sleep(1.0)
-                            await session.send(input="", end_of_turn=True)
+                            await _end_audio_stream()
                         except asyncio.CancelledError:
                             return
                         except Exception as exc:
-                            print(f"[Live] auto end_of_turn failed ({session_id}): {exc}")
+                            print(f"[Live] auto audio_stream_end failed ({session_id}): {exc}")
 
                     silence_commit_task = asyncio.create_task(_commit_after_delay())
 
@@ -177,8 +192,9 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
                         if msg_type == "audio" or "audio" in message:
                             # Raw PCM audio from the browser (base64)
                             raw = base64.b64decode(message.get("audio", message.get("data", "")))
-                            await session.send(
-                                input=types.Blob(data=raw, mime_type="audio/pcm;rate=16000")
+                            audio_stream_ended = False
+                            await session.send_realtime_input(
+                                audio=types.Blob(data=raw, mime_type="audio/pcm;rate=16000")
                             )
                             await _schedule_silence_commit()
 
@@ -191,13 +207,19 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
                             )
                             session_store.add_transcript(session_id, "user", text, sentiment=sentiment_tag)
                             state.update(next_state(state, text, sentiment_tag))
-                            await session.send(input=text, end_of_turn=True)
+                            await session.send_client_content(
+                                turns=types.Content(
+                                    role="user",
+                                    parts=[types.Part(text=text)],
+                                ),
+                                turn_complete=True,
+                            )
 
                         elif msg_type == "end_of_turn":
                             if silence_commit_task and not silence_commit_task.done():
                                 silence_commit_task.cancel()
                                 silence_commit_task = None
-                            await session.send(input="", end_of_turn=True)
+                            await _end_audio_stream()
 
                 except Exception as exc:
                     print(f"[Live] browser→gemini error ({session_id}): {exc}")
@@ -210,47 +232,50 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
             # -------------------------------------------------------- #
             async def send_to_browser() -> None:
                 try:
-                    async for response in session.receive():
-                        sc = response.server_content
+                    while True:
+                        # The SDK's receive() iterator ends after one complete
+                        # model turn, so keep reopening it for the next answer.
+                        async for response in session.receive():
+                            sc = response.server_content
 
-                        # 1. Audio response parts
-                        if sc and sc.model_turn and sc.model_turn.parts:
-                            for part in sc.model_turn.parts:
-                                if part.inline_data and part.inline_data.data:
-                                    audio_b64 = base64.b64encode(part.inline_data.data).decode()
-                                    await websocket.send_json({
-                                        "type": "audio",
-                                        "data": audio_b64,
-                                    })
+                            # 1. Audio response parts
+                            if sc and sc.model_turn and sc.model_turn.parts:
+                                for part in sc.model_turn.parts:
+                                    if part.inline_data and part.inline_data.data:
+                                        audio_b64 = base64.b64encode(part.inline_data.data).decode()
+                                        await websocket.send_json({
+                                            "type": "audio",
+                                            "data": audio_b64,
+                                        })
 
-                        # 2. Output transcription (AI speech → text)
-                        if sc and sc.output_transcription and sc.output_transcription.text:
-                            text = sc.output_transcription.text
-                            session_store.add_transcript(session_id, "interviewer", text)
-                            await websocket.send_json({
-                                "type": "transcript",
-                                "speaker": "interviewer",
-                                "text": text,
-                                "state": {
-                                    "node": state.get("current_node"),
-                                    "difficulty": state.get("difficulty"),
-                                    "topic": state.get("topic"),
-                                },
-                            })
+                            # 2. Output transcription (AI speech → text)
+                            if sc and sc.output_transcription and sc.output_transcription.text:
+                                text = sc.output_transcription.text
+                                session_store.add_transcript(session_id, "interviewer", text)
+                                await websocket.send_json({
+                                    "type": "transcript",
+                                    "speaker": "interviewer",
+                                    "text": text,
+                                    "state": {
+                                        "node": state.get("current_node"),
+                                        "difficulty": state.get("difficulty"),
+                                        "topic": state.get("topic"),
+                                    },
+                                })
 
-                        # 3. Input transcription (user speech → text)
-                        if sc and sc.input_transcription and sc.input_transcription.text:
-                            text = sc.input_transcription.text
-                            session_store.add_transcript(session_id, "user", text)
-                            await websocket.send_json({
-                                "type": "transcript",
-                                "speaker": "user",
-                                "text": text,
-                            })
+                            # 3. Input transcription (user speech → text)
+                            if sc and sc.input_transcription and sc.input_transcription.text:
+                                text = sc.input_transcription.text
+                                session_store.add_transcript(session_id, "user", text)
+                                await websocket.send_json({
+                                    "type": "transcript",
+                                    "speaker": "user",
+                                    "text": text,
+                                })
 
-                        # 4. Turn complete signal
-                        if sc and sc.turn_complete:
-                            await websocket.send_json({"type": "turn_complete"})
+                            # 4. Turn complete signal
+                            if sc and sc.turn_complete:
+                                await websocket.send_json({"type": "turn_complete"})
 
                 except Exception as exc:
                     print(f"[Live] gemini→browser error ({session_id}): {exc}")

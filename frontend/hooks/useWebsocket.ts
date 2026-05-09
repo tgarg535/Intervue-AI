@@ -55,17 +55,50 @@ export function useWebsocket(sessionId: string): WebsocketHook {
   const lastUiMetricUpdateRef = useRef(0);
   const silenceTimerRef = useRef<number | null>(null);
   const spokeSinceLastTurnRef = useRef(false);
+  const sentEndOfTurnRef = useRef(false);
   const noiseFloorRef = useRef(0.003);
   const maxTurnTimerRef = useRef<number | null>(null);
+  const inputSampleRateRef = useRef(16000);
+
+  const resampleTo16k = useCallback((input: Float32Array, inputSampleRate: number) => {
+    const outputSampleRate = 16000;
+    if (inputSampleRate === outputSampleRate) return input;
+
+    const ratio = inputSampleRate / outputSampleRate;
+    const outputLength = Math.max(1, Math.floor(input.length / ratio));
+    const output = new Float32Array(outputLength);
+
+    for (let i = 0; i < outputLength; i++) {
+      const sourceIndex = i * ratio;
+      const leftIndex = Math.floor(sourceIndex);
+      const rightIndex = Math.min(leftIndex + 1, input.length - 1);
+      const fraction = sourceIndex - leftIndex;
+      const left = input[leftIndex] ?? 0;
+      const right = input[rightIndex] ?? left;
+      output[i] = left + (right - left) * fraction;
+    }
+
+    return output;
+  }, []);
+
+  const sendEndOfTurn = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || sentEndOfTurnRef.current) return;
+    socket.send(JSON.stringify({ type: 'end_of_turn' }));
+    sentEndOfTurnRef.current = true;
+    spokeSinceLastTurnRef.current = false;
+  }, []);
 
   const sendAudioChunk = useCallback((float32: Float32Array) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
+    const pcm16k = resampleTo16k(float32, inputSampleRateRef.current);
+
     // Convert Float32 → Int16
-    const int16 = new Int16Array(float32.length);
-    for (let i = 0; i < float32.length; i++) {
-      const clamped = Math.max(-1, Math.min(1, float32[i]!));
+    const int16 = new Int16Array(pcm16k.length);
+    for (let i = 0; i < pcm16k.length; i++) {
+      const clamped = Math.max(-1, Math.min(1, pcm16k[i]!));
       int16[i] = clamped < 0 ? clamped * 0x8000 : clamped * 0x7fff;
     }
 
@@ -84,7 +117,7 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       pitch: audioPitchRef.current,
       mic_level: micLevelRef.current,
     }));
-  }, []);
+  }, [resampleTo16k]);
 
   const processMicFrame = useCallback((float32: Float32Array) => {
     let sum = 0;
@@ -121,13 +154,12 @@ export function useWebsocket(sessionId: string): WebsocketHook {
     const speaking = avgLevel > adaptiveThreshold;
     if (speaking) {
       spokeSinceLastTurnRef.current = true;
+      sentEndOfTurnRef.current = false;
       if (!maxTurnTimerRef.current && socket && socket.readyState === WebSocket.OPEN) {
         maxTurnTimerRef.current = window.setTimeout(() => {
-          const liveSocket = socketRef.current;
-          if (liveSocket && liveSocket.readyState === WebSocket.OPEN && spokeSinceLastTurnRef.current) {
+          if (spokeSinceLastTurnRef.current) {
             console.log('[WS] max-turn end_of_turn');
-            liveSocket.send(JSON.stringify({ type: 'end_of_turn' }));
-            spokeSinceLastTurnRef.current = false;
+            sendEndOfTurn();
           }
           maxTurnTimerRef.current = null;
         }, 7000);
@@ -147,11 +179,9 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       socket.readyState === WebSocket.OPEN
     ) {
       silenceTimerRef.current = window.setTimeout(() => {
-        const liveSocket = socketRef.current;
-        if (liveSocket && liveSocket.readyState === WebSocket.OPEN && spokeSinceLastTurnRef.current) {
+        if (spokeSinceLastTurnRef.current) {
           console.log('[WS] auto end_of_turn');
-          liveSocket.send(JSON.stringify({ type: 'end_of_turn' }));
-          spokeSinceLastTurnRef.current = false;
+          sendEndOfTurn();
         }
         if (maxTurnTimerRef.current) {
           window.clearTimeout(maxTurnTimerRef.current);
@@ -160,8 +190,10 @@ export function useWebsocket(sessionId: string): WebsocketHook {
         silenceTimerRef.current = null;
       }, 900);
     }
-    sendAudioChunk(float32);
-  }, [sendAudioChunk]);
+    if (speaking || spokeSinceLastTurnRef.current) {
+      sendAudioChunk(float32);
+    }
+  }, [sendAudioChunk, sendEndOfTurn]);
 
   // ─── WebSocket connection ─────────────────────────────────────────────────
   useEffect(() => {
@@ -295,6 +327,7 @@ export function useWebsocket(sessionId: string): WebsocketHook {
 
       const ctx = new AudioContext({ sampleRate: 16000 });
       audioCtxRef.current = ctx;
+      inputSampleRateRef.current = ctx.sampleRate;
       const silent = ctx.createGain();
       silent.gain.value = 0;
       silent.connect(ctx.destination);
@@ -347,7 +380,6 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       window.clearTimeout(maxTurnTimerRef.current);
       maxTurnTimerRef.current = null;
     }
-    spokeSinceLastTurnRef.current = false;
     noiseFloorRef.current = 0.003;
     workletNodeRef.current?.disconnect();
     workletNodeRef.current = null;
@@ -368,12 +400,8 @@ export function useWebsocket(sessionId: string): WebsocketHook {
     setAudioPace(0);
     setAudioPitch(0);
     setIsMicActive(false);
-    // Signal end of turn to Gemini
-    const socket = socketRef.current;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: 'end_of_turn' }));
-    }
-  }, []);
+    sendEndOfTurn();
+  }, [sendEndOfTurn]);
 
   useEffect(() => {
     return () => {
