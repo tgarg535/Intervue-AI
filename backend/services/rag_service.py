@@ -23,7 +23,11 @@ class RAGService:
         connects to the pgvector instance. 
         """
         # We use Gemini's text-embedding-004 to maintain consistency with the Flash models 
-        self.embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+        try:
+            self.embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+        except Exception as e:
+            print(f"Warning: Could not initialize embeddings: {str(e)}")
+            self.embeddings = None
         
         # Standard chunking logic: 1000 chars with overlap to preserve context 
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -33,7 +37,7 @@ class RAGService:
         
         # Initialize pgvector via LangChain (Updated for langchain-postgres)
         # Only initialize if DATABASE_URL is provided
-        if CONNECTION_STRING:
+        if CONNECTION_STRING and self.embeddings:
             try:
                 self.vector_store = PGVector(
                     embeddings=self.embeddings,
@@ -80,7 +84,7 @@ class RAGService:
             # 4. Add to pgvector (this generates embeddings automatically) 
             self.vector_store.add_documents(documents)
             
-            return {"status": "success", "chunks": len(documents)}
+            return {"status": "success", "chunks": len(documents), "message": f"Indexed {len(documents)} chunks."}
             
         except Exception as e:
             print(f"RAG Ingestion Error: {str(e)}")

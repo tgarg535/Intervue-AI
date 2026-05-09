@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from models.schemas import FinalReportResponse, QuestionFeedbackSchema, ReportRequest
+from services.persistence_service import persistence_service
 from services.report_generator import report_service
 from services.session_store import session_store
 
@@ -43,7 +44,7 @@ async def generate_report(request: ReportRequest) -> FinalReportResponse:
             detail=f"Report generation failed: {exc}",
         ) from exc
 
-    return FinalReportResponse(
+    response_payload = FinalReportResponse(
         communication_score=report.communication_score,
         technical_score=report.technical_score,
         confidence_score=report.confidence_score,
@@ -59,7 +60,14 @@ async def generate_report(request: ReportRequest) -> FinalReportResponse:
             )
             for f in report.per_question_feedback
         ],
+        persisted=False,
     )
+    persisted = persistence_service.save_report(
+        request.session_id,
+        report_payload=response_payload.model_dump(),
+    )
+    response_payload.persisted = persisted
+    return response_payload
 
 
 @router.get("/session/{session_id}/transcript")

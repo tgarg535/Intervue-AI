@@ -10,23 +10,27 @@ import base64
 import os
 
 from fastapi import WebSocket
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
 
+from services.langgraph_agent import next_state, seed_state
+from services.rag_service import rag_service
 from services.session_store import session_store
+
+load_dotenv()
 
 # ------------------------------------------------------------------ #
 #  Client                                                               #
 # ------------------------------------------------------------------ #
 
-client = genai.Client(
-    api_key=os.environ.get("GOOGLE_API_KEY", ""),
-    http_options={"api_version": "v1alpha"},
-)
-
 # Correct Gemini Live model ID
 LIVE_MODEL_ID = "gemini-3.1-flash-live-preview"
-ENABLE_GEMINI_LIVE = os.environ.get("ENABLE_GEMINI_LIVE", "false").lower() == "true"
+ENABLE_GEMINI_LIVE = os.environ.get("ENABLE_GEMINI_LIVE", "true").lower() == "true"
+
+
+def _gemini_api_key() -> str:
+    return (os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY") or "").strip()
 
 
 # ------------------------------------------------------------------ #
@@ -43,9 +47,29 @@ async def _echo_fallback_session(websocket: WebSocket, session_id: str) -> None:
             "Please ensure your GOOGLE_API_KEY is set and try again."
         ),
     })
+    pending_audio_chunks = 0
     while True:
         try:
             message = await websocket.receive_json()
+            msg_type = message.get("type", "")
+            if msg_type == "audio" or "audio" in message:
+                pending_audio_chunks += 1
+                continue
+
+            if msg_type == "end_of_turn" and pending_audio_chunks > 0:
+                session_store.add_transcript(
+                    session_id,
+                    "user",
+                    "[Audio response captured in fallback mode]",
+                )
+                pending_audio_chunks = 0
+                await websocket.send_json({
+                    "type": "transcript",
+                    "speaker": "interviewer",
+                    "text": "Got your answer. Please continue, or configure Gemini API key for full live interview quality.",
+                })
+                continue
+
             if "text" in message:
                 session_store.add_transcript(session_id, "user", message["text"])
                 await websocket.send_json({
@@ -62,12 +86,18 @@ async def _echo_fallback_session(websocket: WebSocket, session_id: str) -> None:
 # ------------------------------------------------------------------ #
 
 async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
-    if not ENABLE_GEMINI_LIVE or not os.environ.get("GOOGLE_API_KEY"):
+    api_key = _gemini_api_key()
+    if not ENABLE_GEMINI_LIVE or not api_key:
         await _echo_fallback_session(websocket, session_id)
         return
 
+    state = seed_state()
     # Build a rich system prompt using the session's resume + JD
     context_block = session_store.get_context_block(session_id)
+    rag_context = rag_service.get_relevant_context(
+        query="candidate skills, projects, achievements",
+        session_id=session_id,
+    )
     base_instruction = (
         "You are Intervue, a senior AI technical interviewer. "
         "Conduct a focused interview following this flow:\n"
@@ -79,8 +109,8 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
         "Be professional, encouraging, and concise. Do NOT reveal scores or feedback during the interview.\n"
     )
     system_instruction = (
-        f"{base_instruction}\n\n{context_block}"
-        if context_block
+        f"{base_instruction}\n\n{context_block}\n\n=== RAG CONTEXT ===\n{rag_context}"
+        if context_block or rag_context
         else base_instruction
     )
 
@@ -93,6 +123,7 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
     )
 
     try:
+        client = genai.Client(api_key=api_key, http_options={"api_version": "v1alpha"})
         live_connect = client.aio.live.connect(model=LIVE_MODEL_ID, config=config)
     except Exception as exc:
         print(f"[Live] connect setup failed for {session_id}: {exc}")
@@ -101,6 +132,17 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
 
     try:
         async with live_connect as session:
+            # Kick off interviewer greeting only.
+            # We intentionally avoid asking the first question in this turn so the
+            # candidate gets a natural pause before interview questioning starts.
+            await session.send(
+                input=(
+                    "Greet the candidate warmly in 1-2 short sentences. "
+                    "Do not ask any interview question in this first turn. "
+                    "End by inviting the candidate to begin when ready."
+                ),
+                end_of_turn=True,
+            )
 
             # -------------------------------------------------------- #
             #  Browser → Gemini                                          #
@@ -120,7 +162,13 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
 
                         elif msg_type == "text" or "text" in message:
                             text = message.get("text", "")
-                            session_store.add_transcript(session_id, "user", text)
+                            sentiment = message.get("sentiment")
+                            sentiment_tag = (
+                                sentiment if isinstance(sentiment, str)
+                                else (sentiment.get("value") if isinstance(sentiment, dict) else None)
+                            )
+                            session_store.add_transcript(session_id, "user", text, sentiment=sentiment_tag)
+                            state.update(next_state(state, text, sentiment_tag))
                             await session.send(input=text, end_of_turn=True)
 
                         elif msg_type == "end_of_turn":
@@ -155,6 +203,11 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
                                 "type": "transcript",
                                 "speaker": "interviewer",
                                 "text": text,
+                                "state": {
+                                    "node": state.get("current_node"),
+                                    "difficulty": state.get("difficulty"),
+                                    "topic": state.get("topic"),
+                                },
                             })
 
                         # 3. Input transcription (user speech → text)

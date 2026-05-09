@@ -11,7 +11,7 @@ import { useWebsocket } from '../../hooks/useWebsocket';
 function InterviewContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  const sessionId = searchParams.get('session') ?? 'demo-session';
+  const sessionId = searchParams.get('session') ?? '';
 
   const [isCamOn, setIsCamOn] = useState(true);
   const transcriptBottomRef = useRef<HTMLDivElement>(null);
@@ -19,11 +19,18 @@ function InterviewContent() {
   const {
     isConnected,
     transcript,
-    latestText,
     startMic,
     stopMic,
     isMicActive,
+    setLocalSentiment,
+    audioPace,
+    audioPitch,
+    micLevel,
   } = useWebsocket(sessionId);
+
+  useEffect(() => {
+    if (!sessionId) router.replace('/');
+  }, [router, sessionId]);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -104,7 +111,10 @@ function InterviewContent() {
         <div className="col-span-12 lg:col-span-8 flex flex-col gap-6 overflow-y-auto pr-1 custom-scrollbar">
           <div className="relative group rounded-2xl overflow-hidden border border-white/5">
             {isCamOn ? (
-              <WebcamFeed />
+              <WebcamFeed onSentimentChange={(value) => {
+                if (value === 'detecting') return;
+                setLocalSentiment(value);
+              }} />
             ) : (
               <div className="w-full aspect-video bg-slate-900 flex flex-col items-center justify-center rounded-2xl border border-slate-800">
                 <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mb-4">
@@ -123,7 +133,12 @@ function InterviewContent() {
             )}
           </div>
 
-          <LiveAudioVisualizer />
+          <LiveAudioVisualizer
+            active={isMicActive}
+            micLevel={micLevel}
+            pace={audioPace}
+            pitch={audioPitch}
+          />
 
           {/* Tip card */}
           <div className="bg-slate-900/30 rounded-2xl border border-white/5 p-5">

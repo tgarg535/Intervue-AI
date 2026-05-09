@@ -38,8 +38,8 @@ export default function LandingPage() {
         throw new Error(err.detail);
       }
 
-      const { session_id } = await res.json() as { session_id: string };
-      router.push(`/interview?session=${session_id}`);
+      const payload = await res.json() as { session_id: string; warnings?: string[] };
+      router.push(`/interview?session=${payload.session_id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to start. Is the backend running?');
     } finally {

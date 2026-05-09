@@ -3,11 +3,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
-# Import the grouped routers from your routers directory
-from routers import ingest, websocket, report
-
 # Load environment variables (API keys, DB URLs)
 load_dotenv()
+
+# Import the grouped routers from your routers directory
+from routers import ingest, websocket, report
+from services.persistence_service import persistence_service
+from services.storage_service import storage_service
 
 app = FastAPI(
     title="Intervue AI Backend",
@@ -35,7 +37,12 @@ async def root():
     """Health check endpoint to verify the backend is online."""
     return {
         "status": "Intervue AI Backend is running",
-        "version": "1.0.0"
+        "version": "1.1.0",
+        "capabilities": {
+            "persistence": persistence_service.status.enabled,
+            "storage": storage_service.enabled,
+            "gemini_live": os.getenv("ENABLE_GEMINI_LIVE", "false").lower() == "true",
+        },
     }
 
 if __name__ == "__main__":

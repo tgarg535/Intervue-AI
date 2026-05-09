@@ -1,15 +1,21 @@
 'use client';
 
 import React, { useRef, useEffect, useState } from 'react';
+import { useMediaPipe } from '../hooks/useMediaPipe';
 
 type Posture = 'good' | 'bad' | 'detecting';
 type Mood = 'calm' | 'anxious' | 'detecting';
 
-const WebcamFeed: React.FC = () => {
+interface WebcamFeedProps {
+  onSentimentChange?: (sentiment: Mood) => void;
+}
+
+const WebcamFeed: React.FC<WebcamFeedProps> = ({ onSentimentChange }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [posture, setPosture] = useState<Posture>('detecting');
   const [mood, setMood] = useState<Mood>('detecting');
   const [cameraError, setCameraError] = useState(false);
+  const { posture: detectedPosture, sentiment, runDetection } = useMediaPipe(videoRef);
 
   useEffect(() => {
     let stream: MediaStream | null = null;
@@ -22,11 +28,8 @@ const WebcamFeed: React.FC = () => {
           videoRef.current.srcObject = stream;
         }
 
-        // Simulate lightweight posture/mood detection
-        // In production this is replaced by the useMediaPipe hook
         interval = setInterval(() => {
-          setPosture(Math.random() > 0.2 ? 'good' : 'bad');
-          setMood(Math.random() > 0.3 ? 'calm' : 'anxious');
+          runDetection();
         }, 2000);
       } catch {
         setCameraError(true);
@@ -39,7 +42,17 @@ const WebcamFeed: React.FC = () => {
       stream?.getTracks().forEach(t => t.stop());
       if (interval) clearInterval(interval);
     };
-  }, []);
+  }, [runDetection]);
+
+  useEffect(() => {
+    setPosture(detectedPosture);
+    setMood(sentiment);
+  }, [detectedPosture, sentiment]);
+
+  useEffect(() => {
+    if (!onSentimentChange) return;
+    onSentimentChange(mood);
+  }, [mood, onSentimentChange]);
 
   if (cameraError) {
     return (

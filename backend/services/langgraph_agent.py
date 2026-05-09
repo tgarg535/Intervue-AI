@@ -10,6 +10,7 @@ class InterviewState(TypedDict):
     difficulty: int                       # Scale of 1-5
     answer_quality: Annotated[List[int], operator.add] # Appends scores
     sentiment_logs: Annotated[List[str], operator.add] # Appends tags
+    asked_questions: int
     is_complete: bool
 
 # 2. Define the Nodes (The logic for each interview stage)
@@ -30,14 +31,25 @@ def tech_q_node(state: InterviewState):
     return {
         "current_node": "tech_q", 
         "topic": "Technical Skills",
-        "difficulty": int(new_diff)
+        "difficulty": int(new_diff),
+        "asked_questions": state.get("asked_questions", 0) + 1,
+    }
+
+def followup_node(state: InterviewState):
+    """Follow-up probing phase."""
+    return {
+        "current_node": "followup",
+        "topic": "Technical Follow-up",
+        "difficulty": state["difficulty"],
+        "asked_questions": state.get("asked_questions", 0) + 1,
     }
 
 def hr_q_node(state: InterviewState):
     """The behavioral/HR phase."""
     return {
         "current_node": "hr_q", 
-        "topic": "Behavioral/Culture"
+        "topic": "Behavioral/Culture",
+        "asked_questions": state.get("asked_questions", 0) + 1,
     }
 
 def wrap_node(state: InterviewState):
@@ -48,7 +60,7 @@ def wrap_node(state: InterviewState):
     }
 
 # 3. Define Conditional Routing Logic
-def should_continue(state: InterviewState) -> Literal["tech_q", "hr_q", "wrap"]:
+def should_continue(state: InterviewState) -> Literal["tech_q", "followup", "hr_q", "wrap"]:
     """Determines when to move from Technical to HR to Wrap."""
     num_questions = len(state["answer_quality"])
     
@@ -56,7 +68,9 @@ def should_continue(state: InterviewState) -> Literal["tech_q", "hr_q", "wrap"]:
         return "tech_q"
     if state["current_node"] == "tech_q":
         # Move to HR after 3 technical questions
-        return "hr_q" if num_questions >= 3 else "tech_q"
+        return "followup" if num_questions >= 2 else "tech_q"
+    if state["current_node"] == "followup":
+        return "hr_q"
     if state["current_node"] == "hr_q":
         # Move to Wrap after 2 HR questions
         return "wrap" if num_questions >= 5 else "hr_q"
@@ -68,6 +82,7 @@ builder = StateGraph(InterviewState)
 # Add Nodes
 builder.add_node("greet", greet_node)
 builder.add_node("tech_q", tech_q_node)
+builder.add_node("followup", followup_node)
 builder.add_node("hr_q", hr_q_node)
 builder.add_node("wrap", wrap_node)
 
@@ -79,7 +94,10 @@ builder.add_conditional_edges(
     "greet", should_continue, {"tech_q": "tech_q"}
 )
 builder.add_conditional_edges(
-    "tech_q", should_continue, {"tech_q": "tech_q", "hr_q": "hr_q"}
+    "tech_q", should_continue, {"tech_q": "tech_q", "followup": "followup", "hr_q": "hr_q"}
+)
+builder.add_conditional_edges(
+    "followup", should_continue, {"hr_q": "hr_q"}
 )
 builder.add_conditional_edges(
     "hr_q", should_continue, {"hr_q": "hr_q", "wrap": "wrap"}
@@ -89,3 +107,39 @@ builder.add_edge("wrap", END)
 
 # Final Orchestrator Application
 interviewer_app = builder.compile()
+
+
+def seed_state() -> InterviewState:
+    return {
+        "current_node": "greet",
+        "topic": "Introduction",
+        "difficulty": 2,
+        "answer_quality": [],
+        "sentiment_logs": [],
+        "asked_questions": 0,
+        "is_complete": False,
+    }
+
+
+def compute_quality(answer_text: str, sentiment_tag: str | None) -> int:
+    base = min(10, max(1, len(answer_text.strip()) // 25 + 2))
+    if sentiment_tag and "anxious" in sentiment_tag.lower():
+        base = max(1, base - 1)
+    return base
+
+
+def next_state(
+    state: InterviewState,
+    answer_text: str,
+    sentiment_tag: str | None,
+) -> InterviewState:
+    update: InterviewState = {
+        "current_node": state["current_node"],
+        "topic": state["topic"],
+        "difficulty": state["difficulty"],
+        "answer_quality": [compute_quality(answer_text, sentiment_tag)],
+        "sentiment_logs": [sentiment_tag] if sentiment_tag else [],
+        "asked_questions": state.get("asked_questions", 0),
+        "is_complete": False,
+    }
+    return interviewer_app.invoke({**state, **update})

@@ -1,11 +1,14 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Literal
 
 # 1. Models for the Ingestion / Upload Phase
 class IngestResponse(BaseModel):
     session_id: str
     status: str
     message: str
+    storage_status: Literal["cloud", "local_fallback"] = "local_fallback"
+    rag_status: str = "warning"
+    warnings: List[str] = Field(default_factory=list)
 
 # 2. Models for the Live Interview Session
 class SentimentTag(BaseModel):
@@ -34,6 +37,14 @@ class SessionStateUpdate(BaseModel):
 class ReportRequest(BaseModel):
     session_id: str
 
+
+class SessionPayload(BaseModel):
+    session_id: str
+    jd_text: str = ""
+    resume_text: str = ""
+    resume_url: Optional[str] = None
+    jd_url: Optional[str] = None
+
 class QuestionFeedbackSchema(BaseModel):
     question: str
     user_answer: str
@@ -51,3 +62,4 @@ class FinalReportResponse(BaseModel):
     pace_score: int
     overall_summary: str
     feedback_cards: List[QuestionFeedbackSchema]
+    persisted: bool = False

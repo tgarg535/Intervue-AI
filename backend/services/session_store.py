@@ -6,7 +6,9 @@ Swap this out for Supabase/Postgres in production.
 from __future__ import annotations
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
+
+from services.persistence_service import persistence_service
 
 
 @dataclass
@@ -22,6 +24,8 @@ class Session:
     session_id: str
     jd_text: str = ""
     resume_text: str = ""
+    resume_url: Optional[str] = None
+    jd_url: Optional[str] = None
     transcript: List[TranscriptEntry] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
@@ -39,17 +43,47 @@ class SessionStore:
         session_id: str,
         jd_text: str = "",
         resume_text: str = "",
+        resume_url: Optional[str] = None,
+        jd_url: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Session:
         session = Session(
             session_id=session_id,
             jd_text=jd_text,
             resume_text=resume_text,
+            resume_url=resume_url,
+            jd_url=jd_url,
         )
         self._sessions[session_id] = session
+        persistence_service.create_session(
+            session_id=session_id,
+            jd_text=jd_text,
+            resume_text=resume_text,
+            resume_url=resume_url,
+            jd_url=jd_url,
+            metadata=metadata,
+        )
         return session
 
     def get(self, session_id: str) -> Optional[Session]:
-        return self._sessions.get(session_id)
+        local = self._sessions.get(session_id)
+        if local:
+            return local
+
+        persisted = persistence_service.get_session(session_id)
+        if not persisted:
+            return None
+
+        hydrated = Session(
+            session_id=str(persisted["id"]),
+            jd_text=persisted.get("jd_text") or "",
+            resume_text=persisted.get("resume_text") or "",
+            resume_url=persisted.get("resume_url"),
+            jd_url=persisted.get("jd_url"),
+            transcript=[],
+        )
+        self._sessions[session_id] = hydrated
+        return hydrated
 
     def delete(self, session_id: str) -> None:
         self._sessions.pop(session_id, None)
@@ -66,30 +100,40 @@ class SessionStore:
         sentiment: Optional[str] = None,
     ) -> None:
         session = self._sessions.get(session_id)
-        if session and text.strip():
+        if text.strip():
+            if not session:
+                session = self.get(session_id)
+            if not session:
+                return
             session.transcript.append(
                 TranscriptEntry(speaker=speaker, text=text.strip(), sentiment=sentiment)
+            )
+            persistence_service.add_transcript_chunk(
+                session_id=session_id,
+                speaker=speaker,
+                content=text.strip(),
+                sentiment_tag=sentiment,
             )
 
     def get_transcript_text(self, session_id: str) -> str:
         session = self._sessions.get(session_id)
-        if not session:
+        if session and session.transcript:
+            return "\n".join([f"{e.speaker.upper()}: {e.text}" for e in session.transcript])
+
+        persisted = persistence_service.get_transcript(session_id)
+        if not persisted:
             return ""
-        lines = [
-            f"{e.speaker.upper()}: {e.text}"
-            for e in session.transcript
-        ]
-        return "\n".join(lines)
+        return "\n".join(
+            [f"{(entry.get('speaker') or '').upper()}: {entry.get('content') or ''}" for entry in persisted]
+        )
 
     def get_sentiment_tags(self, session_id: str) -> List[str]:
         session = self._sessions.get(session_id)
-        if not session:
-            return []
-        return [
-            e.sentiment
-            for e in session.transcript
-            if e.sentiment
-        ]
+        if session and session.transcript:
+            return [e.sentiment for e in session.transcript if e.sentiment]
+
+        persisted = persistence_service.get_transcript(session_id)
+        return [entry.get("sentiment_tag") for entry in persisted if entry.get("sentiment_tag")]
 
     def get_context_block(self, session_id: str) -> str:
         """Returns JD + resume snippet to inject into Gemini system prompt."""

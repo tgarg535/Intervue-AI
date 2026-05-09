@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     created_at   TIMESTAMPTZ DEFAULT NOW(),
     jd_text      TEXT,
-    resume_url   TEXT
+    resume_url   TEXT,
+    jd_url       TEXT,
+    resume_text  TEXT,
+    metadata     JSONB DEFAULT '{}'::jsonb
 );
 
 -- Transcript chunks (RAG source + report input)
@@ -16,6 +19,7 @@ CREATE TABLE IF NOT EXISTS transcript_chunks (
     speaker      TEXT,                  -- 'user' | 'interviewer'
     content      TEXT,
     sentiment_tag TEXT,                 -- 'calm' | 'anxious' | null
+    extras       JSONB DEFAULT '{}'::jsonb,
     -- Gemini text-embedding-004 outputs 768-dim vectors
     embedding    vector(768),
     created_at   TIMESTAMPTZ DEFAULT NOW()
@@ -32,6 +36,7 @@ CREATE TABLE IF NOT EXISTS reports (
     pace_score           INT,
     overall_summary      TEXT,
     feedback_json        JSONB,
+    UNIQUE(session_id),
     created_at           TIMESTAMPTZ DEFAULT NOW()
 );
 
