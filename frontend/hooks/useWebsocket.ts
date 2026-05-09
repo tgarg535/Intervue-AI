@@ -49,6 +49,14 @@ export function useWebsocket(sessionId: string): WebsocketHook {
   const playbackCursorRef = useRef(0);
   const reconnectAttemptsRef = useRef(0);
   const reconnectTimerRef = useRef<number | null>(null);
+  const audioPaceRef = useRef(0);
+  const audioPitchRef = useRef(0);
+  const micLevelRef = useRef(0);
+  const lastUiMetricUpdateRef = useRef(0);
+  const silenceTimerRef = useRef<number | null>(null);
+  const spokeSinceLastTurnRef = useRef(false);
+  const noiseFloorRef = useRef(0.003);
+  const maxTurnTimerRef = useRef<number | null>(null);
 
   const sendAudioChunk = useCallback((float32: Float32Array) => {
     const socket = socketRef.current;
@@ -72,11 +80,11 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       type: 'audio',
       audio: b64,
       sentiment: localSentimentRef.current,
-      pace: audioPace,
-      pitch: audioPitch,
-      mic_level: micLevel,
+      pace: audioPaceRef.current,
+      pitch: audioPitchRef.current,
+      mic_level: micLevelRef.current,
     }));
-  }, [audioPace, audioPitch, micLevel]);
+  }, []);
 
   const processMicFrame = useCallback((float32: Float32Array) => {
     let sum = 0;
@@ -90,9 +98,68 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       }
     }
     const avgLevel = sum / float32.length;
-    setMicLevel(Math.min(100, avgLevel * 260));
-    setAudioPace((prev) => prev * 0.8 + avgLevel * 120 * 0.2);
-    setAudioPitch(Math.min(100, (zeroCrossings / float32.length) * 500));
+    const nextMicLevel = Math.min(100, avgLevel * 260);
+    const nextAudioPace = audioPaceRef.current * 0.8 + avgLevel * 120 * 0.2;
+    const nextAudioPitch = Math.min(100, (zeroCrossings / float32.length) * 500);
+    micLevelRef.current = nextMicLevel;
+    audioPaceRef.current = nextAudioPace;
+    audioPitchRef.current = nextAudioPitch;
+
+    // Throttle UI state updates to prevent render storms from audio-frame callbacks.
+    const now = performance.now();
+    if (now - lastUiMetricUpdateRef.current >= 120) {
+      lastUiMetricUpdateRef.current = now;
+      setMicLevel(nextMicLevel);
+      setAudioPace(nextAudioPace);
+      setAudioPitch(nextAudioPitch);
+    }
+
+    // Auto-close a user turn after brief silence so AI can respond without
+    // requiring manual mic stop.
+    const socket = socketRef.current;
+    const adaptiveThreshold = Math.max(0.006, noiseFloorRef.current * 2.2);
+    const speaking = avgLevel > adaptiveThreshold;
+    if (speaking) {
+      spokeSinceLastTurnRef.current = true;
+      if (!maxTurnTimerRef.current && socket && socket.readyState === WebSocket.OPEN) {
+        maxTurnTimerRef.current = window.setTimeout(() => {
+          const liveSocket = socketRef.current;
+          if (liveSocket && liveSocket.readyState === WebSocket.OPEN && spokeSinceLastTurnRef.current) {
+            console.log('[WS] max-turn end_of_turn');
+            liveSocket.send(JSON.stringify({ type: 'end_of_turn' }));
+            spokeSinceLastTurnRef.current = false;
+          }
+          maxTurnTimerRef.current = null;
+        }, 7000);
+      }
+      if (silenceTimerRef.current) {
+        window.clearTimeout(silenceTimerRef.current);
+        silenceTimerRef.current = null;
+      }
+    } else {
+      // Continuously adapt ambient-noise baseline while user is not speaking.
+      noiseFloorRef.current = noiseFloorRef.current * 0.98 + avgLevel * 0.02;
+    }
+    if (
+      spokeSinceLastTurnRef.current &&
+      !silenceTimerRef.current &&
+      socket &&
+      socket.readyState === WebSocket.OPEN
+    ) {
+      silenceTimerRef.current = window.setTimeout(() => {
+        const liveSocket = socketRef.current;
+        if (liveSocket && liveSocket.readyState === WebSocket.OPEN && spokeSinceLastTurnRef.current) {
+          console.log('[WS] auto end_of_turn');
+          liveSocket.send(JSON.stringify({ type: 'end_of_turn' }));
+          spokeSinceLastTurnRef.current = false;
+        }
+        if (maxTurnTimerRef.current) {
+          window.clearTimeout(maxTurnTimerRef.current);
+          maxTurnTimerRef.current = null;
+        }
+        silenceTimerRef.current = null;
+      }, 900);
+    }
     sendAudioChunk(float32);
   }, [sendAudioChunk]);
 
@@ -104,8 +171,7 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       const previousSocket = socketRef.current;
       if (
         previousSocket &&
-        (previousSocket.readyState === WebSocket.OPEN ||
-          previousSocket.readyState === WebSocket.CONNECTING)
+        previousSocket.readyState === WebSocket.OPEN
       ) {
         // Ensure only one live websocket at a time to avoid duplicate audio streams.
         previousSocket.close();
@@ -181,7 +247,7 @@ export function useWebsocket(sessionId: string): WebsocketHook {
         reconnectTimerRef.current = null;
       }
       const socket = socketRef.current;
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      if (socket && socket.readyState === WebSocket.OPEN) {
         socket.close();
       }
       socketRef.current = null;
@@ -273,6 +339,16 @@ export function useWebsocket(sessionId: string): WebsocketHook {
   }, [isMicActive, processMicFrame]);
 
   const stopMic = useCallback(() => {
+    if (silenceTimerRef.current) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (maxTurnTimerRef.current) {
+      window.clearTimeout(maxTurnTimerRef.current);
+      maxTurnTimerRef.current = null;
+    }
+    spokeSinceLastTurnRef.current = false;
+    noiseFloorRef.current = 0.003;
     workletNodeRef.current?.disconnect();
     workletNodeRef.current = null;
     micSourceRef.current?.disconnect();
@@ -285,6 +361,12 @@ export function useWebsocket(sessionId: string): WebsocketHook {
     audioCtxRef.current = null;
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    micLevelRef.current = 0;
+    audioPaceRef.current = 0;
+    audioPitchRef.current = 0;
+    setMicLevel(0);
+    setAudioPace(0);
+    setAudioPitch(0);
     setIsMicActive(false);
     // Signal end of turn to Gemini
     const socket = socketRef.current;

@@ -151,6 +151,24 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
             #  Browser → Gemini                                          #
             # -------------------------------------------------------- #
             async def receive_from_browser() -> None:
+                silence_commit_task: asyncio.Task[None] | None = None
+
+                async def _schedule_silence_commit() -> None:
+                    nonlocal silence_commit_task
+                    if silence_commit_task and not silence_commit_task.done():
+                        silence_commit_task.cancel()
+
+                    async def _commit_after_delay() -> None:
+                        try:
+                            await asyncio.sleep(1.0)
+                            await session.send(input="", end_of_turn=True)
+                        except asyncio.CancelledError:
+                            return
+                        except Exception as exc:
+                            print(f"[Live] auto end_of_turn failed ({session_id}): {exc}")
+
+                    silence_commit_task = asyncio.create_task(_commit_after_delay())
+
                 try:
                     while True:
                         message = await websocket.receive_json()
@@ -162,6 +180,7 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
                             await session.send(
                                 input=types.Blob(data=raw, mime_type="audio/pcm;rate=16000")
                             )
+                            await _schedule_silence_commit()
 
                         elif msg_type == "text" or "text" in message:
                             text = message.get("text", "")
@@ -175,10 +194,16 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
                             await session.send(input=text, end_of_turn=True)
 
                         elif msg_type == "end_of_turn":
+                            if silence_commit_task and not silence_commit_task.done():
+                                silence_commit_task.cancel()
+                                silence_commit_task = None
                             await session.send(input="", end_of_turn=True)
 
                 except Exception as exc:
                     print(f"[Live] browser→gemini error ({session_id}): {exc}")
+                finally:
+                    if silence_commit_task and not silence_commit_task.done():
+                        silence_commit_task.cancel()
 
             # -------------------------------------------------------- #
             #  Gemini → Browser                                          #
