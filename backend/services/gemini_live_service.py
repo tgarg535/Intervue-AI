@@ -20,6 +20,9 @@ from services.session_store import session_store
 
 load_dotenv()
 
+# Track one-time bootstrap prompt per interview session to avoid repeated greetings
+_bootstrapped_sessions: set[str] = set()
+
 # ------------------------------------------------------------------ #
 #  Client                                                               #
 # ------------------------------------------------------------------ #
@@ -132,17 +135,17 @@ async def handle_live_session(websocket: WebSocket, session_id: str) -> None:
 
     try:
         async with live_connect as session:
-            # Kick off interviewer greeting only.
-            # We intentionally avoid asking the first question in this turn so the
-            # candidate gets a natural pause before interview questioning starts.
-            await session.send(
-                input=(
-                    "Greet the candidate warmly in 1-2 short sentences. "
-                    "Do not ask any interview question in this first turn. "
-                    "End by inviting the candidate to begin when ready."
-                ),
-                end_of_turn=True,
-            )
+            # Send greeting only once per session_id even if websocket reconnects.
+            if session_id not in _bootstrapped_sessions:
+                await session.send(
+                    input=(
+                        "Greet the candidate warmly in 1-2 short sentences. "
+                        "Do not ask any interview question in this first turn. "
+                        "End by inviting the candidate to begin when ready."
+                    ),
+                    end_of_turn=True,
+                )
+                _bootstrapped_sessions.add(session_id)
 
             # -------------------------------------------------------- #
             #  Browser → Gemini                                          #

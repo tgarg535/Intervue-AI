@@ -101,6 +101,16 @@ export function useWebsocket(sessionId: string): WebsocketHook {
     if (!sessionId) return;
     intentionalCloseRef.current = false;
     const connect = () => {
+      const previousSocket = socketRef.current;
+      if (
+        previousSocket &&
+        (previousSocket.readyState === WebSocket.OPEN ||
+          previousSocket.readyState === WebSocket.CONNECTING)
+      ) {
+        // Ensure only one live websocket at a time to avoid duplicate audio streams.
+        previousSocket.close();
+      }
+
       const url = `${WS_BASE}/ws/interview/${sessionId}`;
       const socket = new WebSocket(url);
       socketRef.current = socket;
@@ -147,6 +157,7 @@ export function useWebsocket(sessionId: string): WebsocketHook {
 
       socket.onclose = () => {
         setIsConnected(false);
+        if (socketRef.current !== socket) return;
         if (intentionalCloseRef.current) return;
         const attempt = reconnectAttemptsRef.current + 1;
         reconnectAttemptsRef.current = attempt;
@@ -173,6 +184,7 @@ export function useWebsocket(sessionId: string): WebsocketHook {
       if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
         socket.close();
       }
+      socketRef.current = null;
     };
   }, [sessionId]);
 
