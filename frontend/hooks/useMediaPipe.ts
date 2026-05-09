@@ -1,106 +1,112 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import type { RefObject } from 'react';
-import { 
-  PoseLandmarker, 
-  FaceLandmarker, 
-  FilesetResolver 
-} from '@mediapipe/tasks-vision';
 
-/**
- * Custom hook to handle MediaPipe CPU-based vision tasks.
- * Tracks posture (Pose) and sentiment (Face Blendshapes).
- */
-export const useMediaPipe = (videoRef: RefObject<HTMLVideoElement>) => {
-  const [posture, setPosture] = useState<'good' | 'bad'>('good');
-  const [sentiment, setSentiment] = useState<'calm' | 'anxious'>('calm');
-  
-  // Refs to hold the AI model instances
-  const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
-  const faceLandmarkerRef = useRef<FaceLandmarker | null>(null);
+export type Posture = 'good' | 'bad';
+export type Sentiment = 'calm' | 'anxious';
+
+interface MediaPipeHook {
+  posture: Posture;
+  sentiment: Sentiment;
+  runDetection: () => void;
+}
+
+export function useMediaPipe(videoRef: RefObject<HTMLVideoElement>): MediaPipeHook {
+  const [posture, setPosture] = useState<Posture>('good');
+  const [sentiment, setSentiment] = useState<Sentiment>('calm');
+
+  const poseRef = useRef<unknown>(null);
+  const faceRef = useRef<unknown>(null);
 
   useEffect(() => {
-    const setupAI = async () => {
+    let cancelled = false;
+
+    const load = async () => {
       try {
+        const { PoseLandmarker, FaceLandmarker, FilesetResolver } =
+          await import('@mediapipe/tasks-vision');
+
         const vision = await FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+          'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm',
         );
 
-        // 1. Initialize Pose Landmarker (for the Posture Bar)
-        poseLandmarkerRef.current = await PoseLandmarker.createFromOptions(vision, {
+        if (cancelled) return;
+
+        poseRef.current = await PoseLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task`,
-            delegate: "CPU" // Running on CPU as per architecture flowchart
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task',
+            delegate: 'CPU',
           },
-          runningMode: "VIDEO"
+          runningMode: 'VIDEO',
         });
 
-        // 2. Initialize Face Landmarker (for Sentiment/Anxiety detection)
-        faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(vision, {
+        faceRef.current = await FaceLandmarker.createFromOptions(vision, {
           baseOptions: {
-            modelAssetPath: `https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task`,
-            delegate: "CPU"
+            modelAssetPath:
+              'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task',
+            delegate: 'CPU',
           },
-          runningMode: "VIDEO",
-          outputFaceBlendshapes: true
+          runningMode: 'VIDEO',
+          outputFaceBlendshapes: true,
         });
-
-        console.log("MediaPipe AI Models Loaded Successfully");
-      } catch (error) {
-        console.error("Failed to initialize MediaPipe:", error);
+      } catch (err) {
+        console.warn('[MediaPipe] failed to load models:', err);
       }
     };
 
-    setupAI();
+    void load();
 
-    // Cleanup models on unmount
     return () => {
-      poseLandmarkerRef.current?.close();
-      faceLandmarkerRef.current?.close();
+      cancelled = true;
+      (poseRef.current as { close?: () => void } | null)?.close?.();
+      (faceRef.current as { close?: () => void } | null)?.close?.();
     };
   }, []);
 
-  /**
-   * Main detection function called by the component's render loop.
-   */
-  const runDetection = () => {
+  const runDetection = useCallback(() => {
     const video = videoRef.current;
-    const poseModel = poseLandmarkerRef.current;
-    const faceModel = faceLandmarkerRef.current;
+    if (!video || video.readyState < 2) return;
 
-    // Only run if video and models are ready
-    if (video && video.readyState >= 2 && poseModel && faceModel) {
-      const timestamp = performance.now();
+    const ts = performance.now();
 
-      // --- Posture Analysis ---
-      const poseResults = poseModel.detectForVideo(video, timestamp);
-      if (poseResults.landmarks?.length > 0) {
-        const nose = poseResults.landmarks[0]?.[0];
-        const leftShoulder = poseResults.landmarks[0]?.[11];
-        const rightShoulder = poseResults.landmarks[0]?.[12];
-        
-        if (nose && leftShoulder && rightShoulder) {
-          const avgShoulderY = (leftShoulder.y + rightShoulder.y) / 2;
+    // Posture
+    const pose = poseRef.current as {
+      detectForVideo: (v: HTMLVideoElement, t: number) => {
+        landmarks?: { x: number; y: number; z: number }[][];
+      };
+    } | null;
 
-          // Logic: if nose drops below a certain threshold relative to shoulders
-          setPosture(nose.y > avgShoulderY - 0.05 ? 'bad' : 'good');
-        }
-      }
-
-      // --- Sentiment Analysis ---
-      const faceResults = faceModel.detectForVideo(video, timestamp);
-      if (faceResults.faceBlendshapes?.length > 0) {
-        const blendshapes = faceResults.faceBlendshapes[0]?.categories;
-        
-        if (blendshapes) {
-          // Find specific markers for anxiety (e.g., brow lowering or lip biting)
-          const browDown = blendshapes.find(s => s.categoryName === 'browDownLeft')?.score || 0;
-          const jawClench = blendshapes.find(s => s.categoryName === 'jawForward')?.score || 0;
-
-          setSentiment((browDown > 0.4 || jawClench > 0.4) ? 'anxious' : 'calm');
+    if (pose) {
+      const { landmarks } = pose.detectForVideo(video, ts);
+      if (landmarks && landmarks.length > 0) {
+        const lm = landmarks[0]!;
+        const nose = lm[0];
+        const lShoulder = lm[11];
+        const rShoulder = lm[12];
+        if (nose && lShoulder && rShoulder) {
+          const avgSY = (lShoulder.y + rShoulder.y) / 2;
+          setPosture(nose.y > avgSY - 0.05 ? 'bad' : 'good');
         }
       }
     }
-  };
+
+    // Sentiment
+    const face = faceRef.current as {
+      detectForVideo: (v: HTMLVideoElement, t: number) => {
+        faceBlendshapes?: { categories: { categoryName: string; score: number }[] }[];
+      };
+    } | null;
+
+    if (face) {
+      const { faceBlendshapes } = face.detectForVideo(video, ts);
+      if (faceBlendshapes && faceBlendshapes.length > 0) {
+        const cats = faceBlendshapes[0]!.categories;
+        const browDown = cats.find(c => c.categoryName === 'browDownLeft')?.score ?? 0;
+        const jawFwd = cats.find(c => c.categoryName === 'jawForward')?.score ?? 0;
+        setSentiment(browDown > 0.4 || jawFwd > 0.4 ? 'anxious' : 'calm');
+      }
+    }
+  }, [videoRef]);
 
   return { posture, sentiment, runDetection };
-};
+}

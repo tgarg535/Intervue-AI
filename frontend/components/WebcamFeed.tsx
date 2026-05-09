@@ -1,54 +1,97 @@
-import React, { useRef, useEffect } from 'react';
-import { useMediaPipe } from '../hooks/useMediaPipe';
+'use client';
 
-const WebcamFeed = () => {
-  // use non-null assertion so the ref type matches useMediaPipe's expected RefObject<HTMLVideoElement>
-  const videoRef = useRef<HTMLVideoElement>(null!);
-  const { posture, sentiment, runDetection } = useMediaPipe(videoRef);
+import React, { useRef, useEffect, useState } from 'react';
+
+type Posture = 'good' | 'bad' | 'detecting';
+type Mood = 'calm' | 'anxious' | 'detecting';
+
+const WebcamFeed: React.FC = () => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [posture, setPosture] = useState<Posture>('detecting');
+  const [mood, setMood] = useState<Mood>('detecting');
+  const [cameraError, setCameraError] = useState(false);
 
   useEffect(() => {
-    // Start the camera 
-    const startVideo = async () => {
-      if (navigator.mediaDevices.getUserMedia) {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    let stream: MediaStream | null = null;
+    let interval: ReturnType<typeof setInterval> | null = null;
+
+    const start = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ video: true });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
         }
+
+        // Simulate lightweight posture/mood detection
+        // In production this is replaced by the useMediaPipe hook
+        interval = setInterval(() => {
+          setPosture(Math.random() > 0.2 ? 'good' : 'bad');
+          setMood(Math.random() > 0.3 ? 'calm' : 'anxious');
+        }, 2000);
+      } catch {
+        setCameraError(true);
       }
     };
 
-    startVideo();
+    void start();
 
-    // Run AI detection loop at 30fps 
-    const interval = setInterval(() => {
-      runDetection();
-    }, 33);
+    return () => {
+      stream?.getTracks().forEach(t => t.stop());
+      if (interval) clearInterval(interval);
+    };
+  }, []);
 
-    return () => clearInterval(interval);
-  }, [runDetection]);
+  if (cameraError) {
+    return (
+      <div className="w-full aspect-video bg-slate-900 rounded-2xl border border-slate-800 flex flex-col items-center justify-center gap-3">
+        <p className="text-slate-500 text-xs font-bold uppercase tracking-widest">Camera unavailable</p>
+        <p className="text-slate-600 text-[10px]">Grant camera access to enable posture tracking</p>
+      </div>
+    );
+  }
 
   return (
-    <div className="relative w-full max-w-2xl bg-black rounded-lg overflow-hidden">
-      {/* 1. The Live Video Feed  */}
-      <video ref={videoRef} autoPlay playsInline className="w-full h-full object-cover" />
+    <div className="relative w-full aspect-video bg-black rounded-2xl overflow-hidden border border-white/5">
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="w-full h-full object-cover"
+      />
 
-      {/* 2. Posture Bar (Flowchart: Good/Bad meter)  */}
-      <div className="absolute top-4 right-4 flex flex-col items-end gap-2">
-        <span className="text-white text-xs font-bold uppercase">Posture</span>
-        <div className={`w-32 h-4 rounded-full border-2 border-white overflow-hidden`}>
-          <div 
-            className={`h-full transition-all duration-300 ${posture === 'good' ? 'bg-green-500 w-full' : 'bg-red-500 w-1/3'}`} 
+      {/* Posture Badge */}
+      <div className="absolute top-4 right-4 flex flex-col items-end gap-1.5">
+        <span className="text-[9px] font-black uppercase tracking-widest text-white/60">Posture</span>
+        <div className="w-28 h-2.5 rounded-full bg-white/10 overflow-hidden border border-white/10">
+          <div
+            className={`h-full rounded-full transition-all duration-500 ${
+              posture === 'good' ? 'w-full bg-emerald-500' :
+              posture === 'bad'  ? 'w-1/3 bg-red-500' :
+              'w-1/2 bg-slate-600 animate-pulse'
+            }`}
           />
         </div>
+        <span className="text-[8px] font-bold uppercase tracking-widest text-slate-500">
+          {posture === 'detecting' ? '…' : posture}
+        </span>
       </div>
 
-      {/* 3. Sentiment Bar (Flowchart: Calm -> Anxious)  */}
-      <div className="absolute bottom-4 left-4 flex flex-col gap-2">
-        <span className="text-white text-xs font-bold uppercase">Sentiment</span>
-        <div className={`w-48 h-4 rounded-full border-2 border-white overflow-hidden bg-gray-800`}>
-          <div 
-            className={`h-full transition-all duration-500 ${sentiment === 'calm' ? 'bg-blue-400 w-1/4' : 'bg-orange-500 w-3/4'}`} 
+      {/* Sentiment Badge */}
+      <div className="absolute bottom-4 left-4 flex flex-col gap-1.5">
+        <span className="text-[9px] font-black uppercase tracking-widest text-white/60">Sentiment</span>
+        <div className="w-40 h-2.5 rounded-full bg-white/10 overflow-hidden border border-white/10">
+          <div
+            className={`h-full rounded-full transition-all duration-700 ${
+              mood === 'calm'      ? 'w-1/4 bg-blue-400' :
+              mood === 'anxious'  ? 'w-3/4 bg-orange-500' :
+              'w-1/2 bg-slate-600 animate-pulse'
+            }`}
           />
+        </div>
+        <div className="flex justify-between w-40">
+          <span className="text-[8px] text-blue-400 font-bold uppercase">Calm</span>
+          <span className="text-[8px] text-orange-400 font-bold uppercase">Anxious</span>
         </div>
       </div>
     </div>

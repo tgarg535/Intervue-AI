@@ -1,34 +1,42 @@
--- Enable the pgvector extension for RAG
+-- Enable the pgvector extension
 CREATE EXTENSION IF NOT EXISTS vector;
 
--- 1. Sessions Table: Tracks metadata for each interview
-CREATE TABLE sessions (
-    id UUID PRIMARY KEY,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    user_id UUID, -- Optional: link to a user profile
-    jd_text TEXT,
-    resume_url TEXT
+-- Sessions
+CREATE TABLE IF NOT EXISTS sessions (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    created_at   TIMESTAMPTZ DEFAULT NOW(),
+    jd_text      TEXT,
+    resume_url   TEXT
 );
 
--- 2. Transcript Chunks: Stores the raw PCM text & sentiment for RAG/Reports
-CREATE TABLE transcript_chunks (
-    id BIGSERIAL PRIMARY KEY,
-    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-    speaker TEXT, -- 'user' or 'interviewer'
-    content TEXT,
-    sentiment_tag TEXT, -- e.g., 'calm', 'anxious'
-    embedding vector(1536), -- Vector size for Gemini embeddings
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Transcript chunks (RAG source + report input)
+CREATE TABLE IF NOT EXISTS transcript_chunks (
+    id           BIGSERIAL PRIMARY KEY,
+    session_id   UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    speaker      TEXT,                  -- 'user' | 'interviewer'
+    content      TEXT,
+    sentiment_tag TEXT,                 -- 'calm' | 'anxious' | null
+    -- Gemini text-embedding-004 outputs 768-dim vectors
+    embedding    vector(768),
+    created_at   TIMESTAMPTZ DEFAULT NOW()
 );
 
--- 3. Reports Table: Stores the final Gemini 3.1 Flash Lite output
-CREATE TABLE reports (
-    id BIGSERIAL PRIMARY KEY,
-    session_id UUID REFERENCES sessions(id) ON DELETE CASCADE,
-    communication_score INT,
-    technical_score INT,
-    confidence_score INT,
-    overall_summary TEXT,
-    feedback_json JSONB, -- Stores the "Feedback Cards"
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+-- Final reports
+CREATE TABLE IF NOT EXISTS reports (
+    id                   BIGSERIAL PRIMARY KEY,
+    session_id           UUID REFERENCES sessions(id) ON DELETE CASCADE,
+    communication_score  INT,
+    technical_score      INT,
+    confidence_score     INT,
+    eye_contact_score    INT,
+    pace_score           INT,
+    overall_summary      TEXT,
+    feedback_json        JSONB,
+    created_at           TIMESTAMPTZ DEFAULT NOW()
 );
+
+-- Index for fast session-scoped similarity search
+CREATE INDEX IF NOT EXISTS transcript_embedding_idx
+    ON transcript_chunks
+    USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);

@@ -1,120 +1,137 @@
-import React, { useEffect, useRef, useState } from 'react';
+'use client';
 
-/**
- * LiveAudioVisualizer Component
- * Handles the "Pitch Bar" and "Pace Bar" using the Web Audio API.
- */
+import React, { useEffect, useRef, useState } from 'react';
+import { Activity } from 'lucide-react';
+
+const BAR_COUNT = 40;
+
 const LiveAudioVisualizer: React.FC = () => {
-  const [pitch, setPitch] = useState(0); // 0 to 100
-  const [pace, setPace] = useState(0);   // 0 to 100
-  const audioContextRef = useRef<AudioContext | null>(null);
+  const [bars, setBars] = useState<number[]>(new Array(BAR_COUNT).fill(2) as number[]);
+  const [pitch, setPitch] = useState(0);
+  const [pace, setPace] = useState(0);
+  const [active, setActive] = useState(false);
+
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
-  const dataArrayRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
-  const animationRef = useRef<number | undefined>(undefined);
+  const animRef = useRef<number | undefined>(undefined);
+  const dataRef = useRef<Uint8Array<ArrayBuffer> | null>(null);
 
   useEffect(() => {
-    const startAudio = async () => {
+    let mounted = true;
+
+    const init = async () => {
       try {
-        // 1. Request Microphone Access
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        
-        // 2. Setup Web Audio API
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        const audioContext = new AudioContextClass();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
-        
-        analyser.fftSize = 2048;
-        source.connect(analyser);
-        
-        audioContextRef.current = audioContext;
+        if (!mounted) { stream.getTracks().forEach(t => t.stop()); return; }
+
+        const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+        const ctx = new AudioCtx();
+        const src = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+
+        src.connect(analyser);
+        audioCtxRef.current = ctx;
         analyserRef.current = analyser;
-        dataArrayRef.current = new Uint8Array(analyser.frequencyBinCount);
-
-        // 3. Start Analysis Loop
-        analyze();
-      } catch (err) {
-        console.error("Microphone access denied for visualizer:", err);
+        dataRef.current = new Uint8Array(analyser.frequencyBinCount);
+        setActive(true);
+        tick();
+      } catch {
+        // mic denied – visualiser stays dormant
       }
     };
 
-const analyze = () => {
-      // 1. Capture the current values in local variables
+    const tick = () => {
       const analyser = analyserRef.current;
-      const dataArray = dataArrayRef.current;
+      const data = dataRef.current;
+      if (!analyser || !data) return;
 
-      // 2. Strong null check: If either is missing, stop the loop
-      if (!analyser || !dataArray) return;
+      analyser.getByteFrequencyData(data);
 
-      // 3. Now passing 'dataArray' (a local variable) clears the red line 
-      // because TS knows it cannot be null at this point.
-      analyser.getByteFrequencyData(dataArray);
-      
-      // --- PITCH CALCULATION ---
-      let maxVal = 0;
-      let maxIndex = 0;
-      for (let i = 0; i < dataArray.length; i++) {
-        const value = dataArray[i];
-        if (value !== undefined && value > maxVal) {
-          maxVal = value;
-          maxIndex = i;
-        }
+      // Bars (take first BAR_COUNT bins)
+      const newBars: number[] = [];
+      for (let i = 0; i < BAR_COUNT; i++) {
+        const val = data[i] ?? 0;
+        newBars.push(Math.max(2, (val / 255) * 100));
       }
-      
-      const normalizedPitch = Math.min(100, (maxIndex / 50) * 100);
-      setPitch(normalizedPitch);
+      setBars(newBars);
 
-      // --- PACE CALCULATION ---
-      const averageAmplitude = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-      setPace((prev) => (prev * 0.9) + (averageAmplitude * 0.1));
+      // Pitch: index of loudest bin
+      let maxVal = 0, maxIdx = 0;
+      for (let i = 0; i < data.length; i++) {
+        if ((data[i] ?? 0) > maxVal) { maxVal = data[i]!; maxIdx = i; }
+      }
+      setPitch(Math.min(100, (maxIdx / data.length) * 200));
 
-      animationRef.current = requestAnimationFrame(analyze);
+      // Pace: average amplitude
+      const avg = data.reduce((a, b) => a + b, 0) / data.length;
+      setPace(prev => prev * 0.85 + avg * 0.15);
+
+      animRef.current = requestAnimationFrame(tick);
     };
 
-    startAudio();
+    void init();
 
     return () => {
-      if (animationRef.current) cancelAnimationFrame(animationRef.current);
-      if (audioContextRef.current) audioContextRef.current.close();
+      mounted = false;
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+      audioCtxRef.current?.close();
     };
   }, []);
 
   return (
-    <div className="flex flex-col gap-6 p-6 bg-slate-900/50 backdrop-blur-xl rounded-2xl border border-white/10 w-full max-w-md">
-      
-      {/* PITCH BAR (Flowchart: Pitch Analysis) */}
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <span className="text-white/60 text-[10px] font-black uppercase tracking-widest">Voice Pitch</span>
-          <span className="text-[10px] text-blue-400 font-bold">{pitch > 70 ? 'HIGH' : pitch < 30 ? 'LOW' : 'STABLE'}</span>
+    <div className="bg-slate-900/50 backdrop-blur-xl rounded-2xl border border-white/10 p-6 space-y-5 w-full">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 text-blue-400">
+          <Activity size={14} />
+          <span className="text-[10px] font-black uppercase tracking-widest">Audio Analysis</span>
         </div>
-        <div className="relative h-3 w-full bg-white/5 rounded-full overflow-hidden">
-          <div 
-            className="h-full bg-gradient-to-r from-blue-600 to-blue-400 transition-all duration-150 ease-out shadow-[0_0_15px_rgba(59,130,246,0.5)]" 
-            style={{ width: `${pitch}%` }} 
-          />
-        </div>
+        <span className={`text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded-full ${
+          active ? 'bg-emerald-500/10 text-emerald-400' : 'bg-slate-800 text-slate-600'
+        }`}>
+          {active ? 'Live' : 'No Mic'}
+        </span>
       </div>
 
-      {/* PACE BAR (Flowchart: Pace Analysis) */}
-      <div className="space-y-2">
-        <div className="flex justify-between items-center">
-          <span className="text-white/60 text-[10px] font-black uppercase tracking-widest">Speaking Pace</span>
-          <span className="text-[10px] text-emerald-400 font-bold">{pace > 40 ? 'ACTIVE' : 'SILENT'}</span>
-        </div>
-        <div className="relative h-3 w-full bg-white/5 rounded-full overflow-hidden">
-          <div 
-            className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-300 ease-out shadow-[0_0_15px_rgba(16,185,129,0.5)]" 
-            style={{ width: `${pace * 2}%` }} 
+      {/* Waveform bars */}
+      <div className="flex items-end gap-[2px] h-16">
+        {bars.map((h, i) => (
+          <div
+            key={i}
+            className="flex-1 rounded-full transition-all duration-75"
+            style={{
+              height: `${h}%`,
+              background: `hsl(${220 + i * 2}, 80%, ${50 + h * 0.2}%)`,
+              opacity: active ? 1 : 0.2,
+            }}
           />
-        </div>
+        ))}
       </div>
 
-      <div className="pt-2 border-t border-white/5">
-        <p className="text-[9px] text-white/30 text-center italic">Live Audio Processing (Web Audio API)</p>
+      {/* Metrics */}
+      <div className="grid grid-cols-2 gap-4">
+        <Meter label="Voice Pitch" value={pitch} tag={pitch > 70 ? 'HIGH' : pitch < 30 ? 'LOW' : 'STABLE'} color="bg-blue-500" />
+        <Meter label="Speaking Pace" value={Math.min(100, pace * 2)} tag={pace > 20 ? 'ACTIVE' : 'SILENT'} color="bg-emerald-500" />
       </div>
     </div>
   );
 };
+
+function Meter({ label, value, tag, color }: { label: string; value: number; tag: string; color: string }) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex justify-between items-center">
+        <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">{label}</span>
+        <span className="text-[9px] font-bold text-slate-400">{tag}</span>
+      </div>
+      <div className="h-1.5 w-full bg-white/5 rounded-full overflow-hidden">
+        <div
+          className={`h-full ${color} transition-all duration-150 ease-out`}
+          style={{ width: `${value}%` }}
+        />
+      </div>
+    </div>
+  );
+}
 
 export default LiveAudioVisualizer;

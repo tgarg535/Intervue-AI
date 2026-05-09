@@ -37,3 +37,6 @@ yarn-error.log*
 .temp/
 *.tmp
 venv/
+
+.env/
+.env.local/

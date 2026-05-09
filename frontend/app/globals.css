@@ -2,20 +2,25 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Custom scrollbar styling */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 8px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
+/* Smooth scrollbar */
+.custom-scrollbar::-webkit-scrollbar { width: 6px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.5);
-  border-radius: 4px;
+  background: rgba(148,163,184,0.15);
+  border-radius: 3px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(148,163,184,0.3);
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.7);
-}
+/* Tailwind animate-in polyfill (small subset) */
+@keyframes fade-in     { from { opacity: 0 } }
+@keyframes slide-in-from-bottom-2 { from { transform: translateY(8px) } }
+@keyframes slide-in-from-bottom-4 { from { transform: translateY(16px) } }
+
+.animate-in { animation-duration: 300ms; animation-fill-mode: both; }
+.fade-in    { animation-name: fade-in; }
+.slide-in-from-bottom-2 { animation-name: slide-in-from-bottom-2; }
+.slide-in-from-bottom-4 { animation-name: slide-in-from-bottom-4; }
+.duration-300 { animation-duration: 300ms; }
+.duration-700 { animation-duration: 700ms; }
