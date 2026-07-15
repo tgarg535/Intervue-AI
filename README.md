@@ -13,6 +13,14 @@
 
 <br/>
 
+## 🚀 LIVE PROJECT
+
+### 👉 **[https://intervue-ai-navy.vercel.app/](https://intervue-ai-navy.vercel.app/)**
+
+<br/>
+
+<br/>
+
 [![Next.js](https://img.shields.io/badge/Next.js-15-black?style=for-the-badge&logo=next.js&logoColor=white)](https://nextjs.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Supabase](https://img.shields.io/badge/Supabase-Postgres-3ECF8E?style=for-the-badge&logo=supabase&logoColor=white)](https://supabase.com/)
