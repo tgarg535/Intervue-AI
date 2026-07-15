@@ -3,6 +3,7 @@ fastapi                     # Web framework for API and WebSockets
 uvicorn[standard]           # ASGI server to run FastAPI
 pydantic                    # Data validation for session/report schemas
 python-dotenv               # Environment variable management for API keys
+python-multipart            # FastAPI form data/upload file support
 
 # --- AI & LLM Orchestration ---
 google-genai                # Official SDK for Gemini 2.0 Flash Live API
@@ -13,6 +14,7 @@ langchain                   # Base framework for AI workflows
 pymupdf                     # Fast PDF parsing for resumes and JDs
 langchain-postgres          # For pgvector integration with Supabase/Postgres
 psycopg[binary,pool]        # Modern PostgreSQL adapter for Python
+psycopg2-binary             # Fallback PostgreSQL adapter for SQLAlchemy default driver
 langchain-google-genai      # Gemini embeddings and standard Flash Lite calls
 langchain-text-splitters    # Modern text splitters for langchain
 
