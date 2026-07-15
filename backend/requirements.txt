@@ -14,6 +14,7 @@ pymupdf                     # Fast PDF parsing for resumes and JDs
 langchain-postgres          # For pgvector integration with Supabase/Postgres
 psycopg[binary,pool]        # Modern PostgreSQL adapter for Python
 langchain-google-genai      # Gemini embeddings and standard Flash Lite calls
+langchain-text-splitters    # Modern text splitters for langchain
 
 # --- Utilities ---
 numpy                       # For handling local audio/sentiment calculations

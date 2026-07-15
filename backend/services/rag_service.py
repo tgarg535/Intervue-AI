@@ -4,8 +4,7 @@ from typing import List, Optional
 from dotenv import load_dotenv
 
 # LangChain and Vector Store imports 
-# Use the text splitter provided by the installed `langchain` package
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_postgres import PGVector
 from langchain_core.documents import Document
