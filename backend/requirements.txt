@@ -19,3 +19,4 @@ langchain-google-genai      # Gemini embeddings and standard Flash Lite calls
 numpy                       # For handling local audio/sentiment calculations
 websockets                  # Low-level support for Gemini Live streaming
 httpx                       # Supabase Storage REST uploads
+gunicorn==21.2.0
