@@ -24,7 +24,7 @@ export interface WebsocketHook {
 }
 
 const WS_BASE =
-  process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000';
+  (process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000').replace(/\/+$/, '');
 
 export function useWebsocket(sessionId: string): WebsocketHook {
   const [isConnected, setIsConnected] = useState(false);
